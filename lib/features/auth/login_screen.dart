@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_routes.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/widgets/app_text_field.dart';
+import '../../core/widgets/google_sign_in_button.dart';
 import '../../core/widgets/primary_button.dart';
 import 'widgets/auth_header.dart';
 
@@ -47,6 +48,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     icon: Icons.mail,
                     keyboardType: TextInputType.emailAddress,
                     controller: _emailController,
+                    autofocus: true,
                   ),
                   const SizedBox(height: 18),
                   AppTextField(
@@ -80,6 +82,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                   const SizedBox(height: 20),
+                  // Без бізнес-логіки: вхід через Google також лише імітується.
+                  GoogleSignInButton(onPressed: _handleSignIn),
+                  const SizedBox(height: 12),
                   PrimaryButton(
                     label: 'Створити новий акаунт',
                     outlined: true,

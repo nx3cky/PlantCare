@@ -12,6 +12,7 @@ class AppTextField extends StatefulWidget {
   final TextInputType keyboardType;
   final String? initialValue;
   final String? helperText;
+  final bool autofocus;
 
   const AppTextField({
     super.key,
@@ -22,6 +23,7 @@ class AppTextField extends StatefulWidget {
     this.keyboardType = TextInputType.text,
     this.initialValue,
     this.helperText,
+    this.autofocus = false,
   });
 
   @override
@@ -35,6 +37,7 @@ class _AppTextFieldState extends State<AppTextField> {
   Widget build(BuildContext context) {
     return TextFormField(
       controller: widget.controller,
+      autofocus: widget.autofocus,
       initialValue: widget.controller == null ? widget.initialValue : null,
       obscureText: widget.isPassword && _obscured,
       keyboardType: widget.isPassword
@@ -44,9 +47,12 @@ class _AppTextFieldState extends State<AppTextField> {
       decoration: InputDecoration(
         labelText: widget.label,
         helperText: widget.helperText,
-        prefixIcon: widget.icon == null
-            ? null
-            : Icon(widget.icon, color: AppColors.muted),
+        prefixIcon: widget.icon == null ? null : Icon(widget.icon),
+        prefixIconColor: WidgetStateColor.resolveWith(
+          (states) => states.contains(WidgetState.focused)
+              ? AppColors.primary
+              : AppColors.muted,
+        ),
         suffixIcon: widget.isPassword
             ? IconButton(
                 tooltip: _obscured ? 'Показати пароль' : 'Приховати пароль',
