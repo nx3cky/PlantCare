@@ -1,3 +1,4 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/data/mock_data.dart';
@@ -7,6 +8,7 @@ import '../../core/widgets/plant_card.dart';
 import '../../core/widgets/section_header.dart';
 import '../../core/widgets/stat_card.dart';
 import '../../core/widgets/user_avatar.dart';
+import '../auth/data/auth_repository.dart';
 
 /// Головний екран: привітання, пошук, лічильники, догляд на сьогодні, мої рослини.
 class HomeScreen extends StatefulWidget {
@@ -19,11 +21,13 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  // Hardcoded-дані замість запиту до сервера.
-  static const String _userName = MockUser.firstName;
+  // Кількість рослин потребує Cloud Firestore – поки hardcoded.
   static const int _plantsCount = MockUser.plantsCount;
 
+  static const int _maxRecent = 5;
+
   final Set<int> _doneTasks = {};
+  final List<Plant> _recentPlants = [];
 
   int get _overdueCount => [
         for (var i = 0; i < todayTasks.length; i++)
@@ -33,6 +37,15 @@ class _HomeScreenState extends State<HomeScreen> {
   void _toggleTask(int index) {
     setState(() {
       if (!_doneTasks.remove(index)) _doneTasks.add(index);
+    });
+  }
+
+  // Без екрана деталей «перегляд» рослини = натискання на її картку.
+  void _openPlant(Plant plant) {
+    setState(() {
+      _recentPlants.remove(plant);
+      _recentPlants.insert(0, plant);
+      if (_recentPlants.length > _maxRecent) _recentPlants.removeLast();
     });
   }
 
@@ -119,27 +132,89 @@ class _HomeScreenState extends State<HomeScreen> {
                 separatorBuilder: (_, _) => const SizedBox(width: 12),
                 itemBuilder: (_, i) => PlantCard(
                   plant: myPlants[i],
-                  onTap: () => _showNotImplemented('Картка «${myPlants[i].name}»'),
+                  onTap: () => _openPlant(myPlants[i]),
                 ),
               ),
             ),
+            const SizedBox(height: 8),
+            SectionHeader(
+              title: 'Нещодавно переглянуті',
+              actionLabel: _recentPlants.isEmpty ? null : 'Очистити',
+              onAction: () => setState(_recentPlants.clear),
+            ),
+            const SizedBox(height: 4),
+            if (_recentPlants.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'Натисніть на рослину, щоб вона з’явилася тут',
+                  style: TextStyle(fontSize: 14, color: AppColors.muted),
+                ),
+              )
+            else
+              SizedBox(
+                height: 140,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _recentPlants.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 12),
+                  itemBuilder: (_, i) => PlantCard(
+                    plant: _recentPlants[i],
+                    onTap: () => _openPlant(_recentPlants[i]),
+                  ),
+                ),
+              ),
           ],
         ),
       ),
     );
   }
 
+  /// Перше слово імені з профілю Firebase Auth або частина email до «@».
+  static String _firstName(User? user) {
+    final name = user?.displayName?.trim() ?? '';
+    if (name.isNotEmpty) return name.split(RegExp(r'\s+')).first;
+    final email = user?.email ?? '';
+    return email.contains('@') ? email.split('@').first : 'друже';
+  }
+
+  static String _greetingFor(DateTime now) => switch (now.hour) {
+        >= 5 && < 12 => 'Доброго ранку,',
+        >= 12 && < 18 => 'Доброго дня,',
+        _ => 'Доброго вечора,',
+      };
+
   Widget _buildGreeting() {
+    // Підписка на userChanges(): нове ім'я чи фото з профілю одразу з'являються тут.
+    return StreamBuilder<User?>(
+      stream: AuthRepository.instance.userChanges(),
+      initialData: AuthRepository.instance.currentUser,
+      builder: (context, snapshot) {
+        final user = snapshot.data;
+        return _buildGreetingRow(
+          name: _firstName(user),
+          avatar: UserAvatar(
+            initials: UserAvatar.initialsOf(user?.displayName, user?.email),
+            photoUrl: user?.photoURL,
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildGreetingRow({required String name, required Widget avatar}) {
     return Row(
       children: [
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Доброго ранку,', style: TextStyle(fontSize: 15, color: AppColors.muted)),
+              Text(_greetingFor(DateTime.now()),
+                  style: const TextStyle(fontSize: 15, color: AppColors.muted)),
               Text(
-                _userName,
-                style: TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.text),
+                name,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.text),
               ),
             ],
           ),
@@ -159,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
         const SizedBox(width: 8),
         GestureDetector(
           onTap: () => widget.onOpenTab(3),
-          child: const UserAvatar(initials: MockUser.initials),
+          child: avatar,
         ),
       ],
     );

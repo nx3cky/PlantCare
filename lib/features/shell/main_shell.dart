@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/services/analytics_service.dart';
 import '../home/home_screen.dart';
 import '../profile/profile_screen.dart';
 import 'placeholder_screen.dart';
@@ -18,9 +19,22 @@ class MainShell extends StatefulWidget {
 }
 
 class _MainShellState extends State<MainShell> {
+  static const _tabNames = ['home', 'plants', 'journal', 'profile'];
+
   late int _index = widget.initialTab;
 
-  void _selectTab(int index) => setState(() => _index = index);
+  @override
+  void initState() {
+    super.initState();
+    AnalyticsService.instance.logScreenView(_tabNames[_index]);
+  }
+
+  // Вкладки IndexedStack не є маршрутами Navigator, тож перегляд логуємо вручну.
+  void _selectTab(int index) {
+    if (index == _index) return;
+    setState(() => _index = index);
+    AnalyticsService.instance.logScreenView(_tabNames[index]);
+  }
 
   @override
   Widget build(BuildContext context) {

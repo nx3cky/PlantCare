@@ -43,9 +43,12 @@ class AuthHeader extends StatelessWidget {
             ),
             onSelectionChanged: (selection) {
               if (selection.first == mode) return;
-              Navigator.of(context).pushReplacementNamed(
-                selection.first == AuthMode.login ? AppRoutes.login : AppRoutes.register,
-              );
+              // Реєстрація відкривається поверх входу, тож назад – просто pop.
+              if (selection.first == AuthMode.register) {
+                Navigator.of(context).pushNamed(AppRoutes.register);
+              } else {
+                Navigator.of(context).pop();
+              }
             },
           ),
         ),
