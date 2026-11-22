@@ -1,58 +1,46 @@
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
-import '../../core/data/mock_data.dart';
+import '../../app/app_routes.dart';
+import '../../core/data/models/care_schedule.dart';
+import '../../core/data/models/plant.dart';
 import '../../core/theme/app_colors.dart';
+import '../../core/utils/date_format.dart';
+import '../../core/widgets/app_snack_bar.dart';
 import '../../core/widgets/care_task_card.dart';
 import '../../core/widgets/plant_card.dart';
 import '../../core/widgets/section_header.dart';
 import '../../core/widgets/stat_card.dart';
 import '../../core/widgets/user_avatar.dart';
-import '../auth/data/auth_repository.dart';
+import '../auth/bloc/auth_bloc.dart';
+import '../auth/data/app_user.dart';
+import '../journal/bloc/journal_bloc.dart';
+import '../journal/care_actions.dart';
+import '../plants/bloc/plants_bloc.dart';
+import '../shell/navigation_cubit.dart';
 
-/// Головний екран: привітання, пошук, лічильники, догляд на сьогодні, мої рослини.
-class HomeScreen extends StatefulWidget {
-  final ValueChanged<int> onOpenTab;
+/// ФВ-6. Головний екран: привітання, пошук, лічильники, догляд на сьогодні,
+/// рослини за найближчим поливом і нещодавно переглянуті.
+class HomeScreen extends StatelessWidget {
+  const HomeScreen({super.key});
 
-  const HomeScreen({super.key, required this.onOpenTab});
+  void _openTab(BuildContext context, AppTab tab) => context.read<NavigationCubit>().select(tab);
 
-  @override
-  State<HomeScreen> createState() => _HomeScreenState();
-}
+  void _openPlant(BuildContext context, Plant plant) =>
+      Navigator.of(context).pushNamed(AppRoutes.plantDetails, arguments: plant.id);
 
-class _HomeScreenState extends State<HomeScreen> {
-  // Кількість рослин потребує Cloud Firestore – поки hardcoded.
-  static const int _plantsCount = MockUser.plantsCount;
-
-  static const int _maxRecent = 5;
-
-  final Set<int> _doneTasks = {};
-  final List<Plant> _recentPlants = [];
-
-  int get _overdueCount => [
-        for (var i = 0; i < todayTasks.length; i++)
-          if (todayTasks[i].overdue && !_doneTasks.contains(i)) i,
-      ].length;
-
-  void _toggleTask(int index) {
-    setState(() {
-      if (!_doneTasks.remove(index)) _doneTasks.add(index);
-    });
+  void _toggleTask(BuildContext context, CareTask task) {
+    if (task.done) {
+      context.read<JournalBloc>().add(JournalEntryDeleted(task.doneEntry!));
+      context.showMessage('Відмітку «${task.type.label} · ${task.plant.name}» скасовано');
+    } else {
+      CareActions.logNow(context, task.plant, task.type);
+    }
   }
 
-  // Без екрана деталей «перегляд» рослини = натискання на її картку.
-  void _openPlant(Plant plant) {
-    setState(() {
-      _recentPlants.remove(plant);
-      _recentPlants.insert(0, plant);
-      if (_recentPlants.length > _maxRecent) _recentPlants.removeLast();
-    });
-  }
-
-  void _showNotImplemented(String what) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$what – буде реалізовано в наступних ЛР')),
-    );
+  void _search(BuildContext context, String query) {
+    context.read<PlantsBloc>().add(PlantsQueryChanged(query));
+    _openTab(context, AppTab.plants);
   }
 
   @override
@@ -62,121 +50,167 @@ class _HomeScreenState extends State<HomeScreen> {
         tooltip: 'Додати рослину',
         backgroundColor: AppColors.primaryContainer,
         foregroundColor: AppColors.onPrimaryContainer,
-        onPressed: () => _showNotImplemented('Додавання рослини'),
+        onPressed: () => Navigator.of(context).pushNamed(AppRoutes.plantForm),
         child: const Icon(Icons.add, size: 28),
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
-          children: [
-            _buildGreeting(),
-            const SizedBox(height: 16),
-            SearchBar(
-              hintText: 'Пошук рослин або процедур',
-              elevation: const WidgetStatePropertyAll(0),
-              backgroundColor: const WidgetStatePropertyAll(AppColors.surfaceVariant),
-              leading: const Padding(
-                padding: EdgeInsets.only(left: 8),
-                child: Icon(Icons.search, color: AppColors.muted),
-              ),
-              trailing: [
-                IconButton(
-                  tooltip: 'Фільтри',
-                  onPressed: () => _showNotImplemented('Фільтри'),
-                  icon: const Icon(Icons.tune, color: AppColors.muted),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
+        child: BlocBuilder<PlantsBloc, PlantsState>(
+          builder: (context, state) {
+            if (state.status == PlantsStatus.loading) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final tasks = state.todayTasks;
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 96),
               children: [
-                const Expanded(
-                  child: StatCard(title: 'Рослин', value: _plantsCount, icon: Icons.eco, iconColor: AppColors.primary),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: StatCard(
-                    title: 'Сьогодні',
-                    value: todayTasks.length - _doneTasks.length,
-                    icon: Icons.water_drop,
-                    iconColor: AppColors.water,
+                const _Greeting(),
+                const SizedBox(height: 16),
+                SearchBar(
+                  hintText: 'Пошук рослин',
+                  elevation: const WidgetStatePropertyAll(0),
+                  backgroundColor: const WidgetStatePropertyAll(AppColors.surfaceVariant),
+                  leading: const Padding(
+                    padding: EdgeInsets.only(left: 8),
+                    child: Icon(Icons.search, color: AppColors.muted),
                   ),
+                  onSubmitted: (q) => _search(context, q),
+                  trailing: [
+                    IconButton(
+                      tooltip: 'Фільтри',
+                      onPressed: () => _openTab(context, AppTab.plants),
+                      icon: const Icon(Icons.tune, color: AppColors.muted),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: StatCard(
-                    title: 'Прострочено',
-                    value: _overdueCount,
-                    icon: Icons.warning_rounded,
-                    iconColor: AppColors.error,
-                    alert: _overdueCount > 0,
-                  ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: StatCard(
+                        title: 'Рослин',
+                        value: state.plants.length,
+                        icon: Icons.eco,
+                        iconColor: AppColors.primary,
+                        onTap: () => _openTab(context, AppTab.plants),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: StatCard(
+                        title: 'Сьогодні',
+                        value: state.pendingTaskCount,
+                        icon: Icons.water_drop,
+                        iconColor: AppColors.water,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: StatCard(
+                        title: 'Прострочено',
+                        value: state.overdueCount,
+                        icon: Icons.warning_rounded,
+                        iconColor: AppColors.error,
+                        alert: state.overdueCount > 0,
+                      ),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 16),
+                SectionHeader(
+                  title: 'Догляд на сьогодні',
+                  actionLabel: 'Журнал',
+                  onAction: () => _openTab(context, AppTab.journal),
+                ),
+                const SizedBox(height: 4),
+                if (tasks.isEmpty)
+                  const _EmptyHint('На сьогодні все зроблено – рослини доглянуті')
+                else
+                  for (final task in tasks) ...[
+                    CareTaskCard(
+                      task: task,
+                      onToggle: () => _toggleTask(context, task),
+                      onTap: () => _openPlant(context, task.plant),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                const SizedBox(height: 8),
+                SectionHeader(
+                  title: 'Мої рослини',
+                  actionLabel: 'Каталог',
+                  onAction: () => _openTab(context, AppTab.plants),
+                ),
+                const SizedBox(height: 4),
+                if (state.plants.isEmpty)
+                  const _EmptyHint('Додайте першу рослину кнопкою «+»')
+                else
+                  _PlantStrip(plants: state.byNextWatering, state: state, onTap: (p) => _openPlant(context, p)),
+                const SizedBox(height: 8),
+                SectionHeader(
+                  title: 'Нещодавно переглянуті',
+                  actionLabel: state.recentPlants.isEmpty ? null : 'Очистити',
+                  onAction: () => context.read<PlantsBloc>().add(const PlantsRecentCleared()),
+                ),
+                const SizedBox(height: 4),
+                if (state.recentPlants.isEmpty)
+                  const _EmptyHint('Відкрийте рослину, щоб вона з’явилася тут')
+                else
+                  _PlantStrip(plants: state.recentPlants, state: state, onTap: (p) => _openPlant(context, p)),
               ],
-            ),
-            const SizedBox(height: 16),
-            SectionHeader(title: 'Догляд на сьогодні', actionLabel: 'Усі', onAction: () => widget.onOpenTab(2)),
-            const SizedBox(height: 4),
-            for (var i = 0; i < todayTasks.length; i++) ...[
-              CareTaskCard(task: todayTasks[i], done: _doneTasks.contains(i), onToggle: () => _toggleTask(i)),
-              const SizedBox(height: 10),
-            ],
-            const SizedBox(height: 8),
-            SectionHeader(title: 'Мої рослини', actionLabel: 'Каталог', onAction: () => widget.onOpenTab(1)),
-            const SizedBox(height: 4),
-            SizedBox(
-              height: 140,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: myPlants.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 12),
-                itemBuilder: (_, i) => PlantCard(
-                  plant: myPlants[i],
-                  onTap: () => _openPlant(myPlants[i]),
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            SectionHeader(
-              title: 'Нещодавно переглянуті',
-              actionLabel: _recentPlants.isEmpty ? null : 'Очистити',
-              onAction: () => setState(_recentPlants.clear),
-            ),
-            const SizedBox(height: 4),
-            if (_recentPlants.isEmpty)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 12),
-                child: Text(
-                  'Натисніть на рослину, щоб вона з’явилася тут',
-                  style: TextStyle(fontSize: 14, color: AppColors.muted),
-                ),
-              )
-            else
-              SizedBox(
-                height: 140,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _recentPlants.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 12),
-                  itemBuilder: (_, i) => PlantCard(
-                    plant: _recentPlants[i],
-                    onTap: () => _openPlant(_recentPlants[i]),
-                  ),
-                ),
-              ),
-          ],
+            );
+          },
         ),
       ),
     );
   }
+}
 
-  /// Перше слово імені з профілю Firebase Auth або частина email до «@».
-  static String _firstName(User? user) {
-    final name = user?.displayName?.trim() ?? '';
-    if (name.isNotEmpty) return name.split(RegExp(r'\s+')).first;
-    final email = user?.email ?? '';
-    return email.contains('@') ? email.split('@').first : 'друже';
+/// Горизонтальний список карток рослин (ListView.separated).
+class _PlantStrip extends StatelessWidget {
+  final List<Plant> plants;
+  final PlantsState state;
+  final ValueChanged<Plant> onTap;
+
+  const _PlantStrip({required this.plants, required this.state, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 140,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: plants.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 12),
+        itemBuilder: (_, i) {
+          final schedule = state.scheduleOf(plants[i]);
+          return PlantCard(
+            plant: plants[i],
+            subtitle: 'Полив · ${DateFormatUa.relative(schedule.daysToWatering)}',
+            alert: schedule.daysToWatering < 0,
+            onTap: () => onTap(plants[i]),
+          );
+        },
+      ),
+    );
   }
+}
+
+class _EmptyHint extends StatelessWidget {
+  final String text;
+
+  const _EmptyHint(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Text(text, style: const TextStyle(fontSize: 14, color: AppColors.muted)),
+    );
+  }
+}
+
+/// Привітання з ім'ям і аватаром: перебудовується лише при зміні користувача.
+class _Greeting extends StatelessWidget {
+  const _Greeting();
 
   static String _greetingFor(DateTime now) => switch (now.hour) {
         >= 5 && < 12 => 'Доброго ранку,',
@@ -184,35 +218,18 @@ class _HomeScreenState extends State<HomeScreen> {
         _ => 'Доброго вечора,',
       };
 
-  Widget _buildGreeting() {
-    // Підписка на userChanges(): нове ім'я чи фото з профілю одразу з'являються тут.
-    return StreamBuilder<User?>(
-      stream: AuthRepository.instance.userChanges(),
-      initialData: AuthRepository.instance.currentUser,
-      builder: (context, snapshot) {
-        final user = snapshot.data;
-        return _buildGreetingRow(
-          name: _firstName(user),
-          avatar: UserAvatar(
-            initials: UserAvatar.initialsOf(user?.displayName, user?.email),
-            photoUrl: user?.photoURL,
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildGreetingRow({required String name, required Widget avatar}) {
+  @override
+  Widget build(BuildContext context) {
+    final user = context.select<AuthBloc, AppUser?>((bloc) => bloc.state.user);
     return Row(
       children: [
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(_greetingFor(DateTime.now()),
-                  style: const TextStyle(fontSize: 15, color: AppColors.muted)),
+              Text(_greetingFor(DateTime.now()), style: const TextStyle(fontSize: 15, color: AppColors.muted)),
               Text(
-                name,
+                user?.firstName ?? '',
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700, color: AppColors.text),
               ),
@@ -221,20 +238,17 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         IconButton(
           tooltip: 'Сповіщення',
-          onPressed: () => _showNotImplemented('Сповіщення'),
-          style: IconButton.styleFrom(
-            backgroundColor: AppColors.surfaceVariant,
-            fixedSize: const Size(48, 48),
-          ),
-          icon: const Badge(
-            smallSize: 8,
-            child: Icon(Icons.notifications, color: AppColors.text),
-          ),
+          onPressed: () => context.showMessage('Сповіщення з’являться разом із Firebase Cloud Messaging'),
+          style: IconButton.styleFrom(backgroundColor: AppColors.surfaceVariant, fixedSize: const Size(48, 48)),
+          icon: const Badge(smallSize: 8, child: Icon(Icons.notifications, color: AppColors.text)),
         ),
         const SizedBox(width: 8),
         GestureDetector(
-          onTap: () => widget.onOpenTab(3),
-          child: avatar,
+          onTap: () => context.read<NavigationCubit>().select(AppTab.profile),
+          child: UserAvatar(
+            initials: UserAvatar.initialsOf(user?.displayName, user?.email),
+            photoUrl: user?.photoUrl,
+          ),
         ),
       ],
     );

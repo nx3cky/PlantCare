@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../core/theme/app_colors.dart';
 import '../../core/utils/validators.dart';
@@ -37,7 +38,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     setState(() => _loading = true);
     final email = _emailController.text.trim();
     try {
-      await AuthRepository.instance.sendPasswordReset(email);
+      await context.read<AuthRepository>().sendPasswordReset(email);
       if (!mounted) return;
       setState(() => _sentTo = email);
       context.showMessage('Лист для відновлення пароля надіслано на $email');

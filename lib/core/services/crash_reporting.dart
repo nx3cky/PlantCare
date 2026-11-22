@@ -1,3 +1,4 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:flutter/foundation.dart';
 
@@ -5,6 +6,9 @@ import 'package:flutter/foundation.dart';
 /// тому у веб-версії звіти не надсилаються, а помилки лише виводяться в консоль.
 abstract final class CrashReporting {
   static bool get isSupported => !kIsWeb;
+
+  /// Firebase ініціалізовано (у тестах – ні, тоді звіти лише в консоль).
+  static bool get _enabled => isSupported && Firebase.apps.isNotEmpty;
 
   static Future<void> init() async {
     if (!isSupported) return;
@@ -23,13 +27,13 @@ abstract final class CrashReporting {
 
   /// Ідентифікатор користувача у звітах (uid Firebase Auth, без email і паролів).
   static Future<void> setUser(String? uid) async {
-    if (!isSupported) return;
+    if (!_enabled) return;
     await FirebaseCrashlytics.instance.setUserIdentifier(uid ?? '');
   }
 
   /// Нефатальна помилка: застосунок обробив її й продовжує роботу.
   static Future<void> recordError(Object error, StackTrace stack, {String? reason}) async {
-    if (!isSupported) {
+    if (!_enabled) {
       debugPrint('Non-fatal: $error');
       return;
     }
@@ -38,7 +42,7 @@ abstract final class CrashReporting {
 
   /// Тестова помилка для перевірки інтеграції (кнопка на екрані «Профіль»).
   static Future<void> sendTestError() async {
-    if (isSupported) {
+    if (_enabled) {
       FirebaseCrashlytics.instance.log('Test error button pressed on profile screen');
     }
     try {

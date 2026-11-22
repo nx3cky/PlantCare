@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Кольорові токени дизайну Plant Care (з макетів ЛР2, Material 3).
 abstract final class AppColors {

@@ -1,8 +1,9 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../core/utils/validators.dart';
 import '../../../core/widgets/app_text_field.dart';
-import '../../auth/data/auth_failure.dart';
+import '../bloc/profile_bloc.dart';
 
 /// Валідатор поля діалогу; [values] – поточні значення всіх полів форми.
 typedef DialogValidator = String? Function(String? value, List<String> values);
@@ -14,80 +15,64 @@ class DialogField {
   final bool isPassword;
   final String? initialValue;
 
-  const DialogField({
-    required this.label,
-    required this.validator,
-    this.isPassword = false,
-    this.initialValue,
-  });
+  const DialogField({required this.label, required this.validator, this.isPassword = false, this.initialValue});
 }
 
 /// Діалог із формою для коротких змін профілю (ім'я, створення пароля).
-/// Під час запиту поля й кнопки заблоковані, помилка показується в діалозі.
+/// Надсилає подію в [ProfileBloc] і слухає результат операції [action]:
+/// під час запиту поля заблоковані, помилка показується в діалозі,
+/// а після успіху діалог закривається.
 class ProfileFormDialog extends StatefulWidget {
   final String title;
   final List<DialogField> fields;
   final String submitLabel;
-  final Future<void> Function(List<String> values) onSubmit;
+  final ProfileAction action;
+  final ProfileEvent Function(List<String> values) toEvent;
 
   const ProfileFormDialog({
     super.key,
     required this.title,
     required this.fields,
-    required this.onSubmit,
+    required this.action,
+    required this.toEvent,
     this.submitLabel = 'Зберегти',
   });
 
-  /// Повертає true, якщо [onSubmit] завершився успішно.
+  /// Повертає true, якщо операцію виконано успішно.
   Future<bool> show(BuildContext context) async {
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => this,
-    );
+    final result = await showDialog<bool>(context: context, barrierDismissible: false, builder: (_) => this);
     return result ?? false;
   }
 
   /// ФВ-4. Редагування імені.
-  factory ProfileFormDialog.editName({
-    required String? current,
-    required Future<void> Function(String name) save,
-  }) {
-    return ProfileFormDialog(
-      title: 'Особисті дані',
-      fields: [
-        DialogField(
-          label: 'Ім’я та прізвище',
-          initialValue: current,
-          validator: (value, _) => Validators.name(value),
-        ),
-      ],
-      onSubmit: (v) => save(v[0]),
-    );
-  }
+  factory ProfileFormDialog.editName({required String? current}) => ProfileFormDialog(
+        title: 'Особисті дані',
+        action: ProfileAction.name,
+        fields: [
+          DialogField(
+            label: 'Ім’я та прізвище',
+            initialValue: current,
+            validator: (value, _) => Validators.name(value),
+          ),
+        ],
+        toEvent: (v) => ProfileNameChanged(v[0]),
+      );
 
   /// Створення пароля для акаунта Google (прив'язка способу входу).
-  factory ProfileFormDialog.createPassword({
-    required Future<void> Function(String password) save,
-  }) {
-    return ProfileFormDialog(
-      title: 'Вхід за паролем',
-      submitLabel: 'Створити',
-      fields: [
-        DialogField(
-          label: 'Новий пароль',
-          isPassword: true,
-          validator: (value, _) => Validators.newPassword(value),
-        ),
-        DialogField(
-          label: 'Підтвердження пароля',
-          isPassword: true,
-          validator: (value, values) => Validators.confirmPassword(() => values[0])(value),
-        ),
-      ],
-      onSubmit: (v) => save(v[0]),
-    );
-  }
+  factory ProfileFormDialog.createPassword() => ProfileFormDialog(
+        title: 'Вхід за паролем',
+        submitLabel: 'Створити',
+        action: ProfileAction.createPassword,
+        fields: [
+          DialogField(label: 'Новий пароль', isPassword: true, validator: (value, _) => Validators.newPassword(value)),
+          DialogField(
+            label: 'Підтвердження пароля',
+            isPassword: true,
+            validator: (value, values) => Validators.confirmPassword(() => values[0])(value),
+          ),
+        ],
+        toEvent: (v) => ProfilePasswordCreated(v[0]),
+      );
 
   @override
   State<ProfileFormDialog> createState() => _ProfileFormDialogState();
@@ -95,10 +80,7 @@ class ProfileFormDialog extends StatefulWidget {
 
 class _ProfileFormDialogState extends State<ProfileFormDialog> {
   final _formKey = GlobalKey<FormState>();
-  late final _controllers = [
-    for (final f in widget.fields) TextEditingController(text: f.initialValue),
-  ];
-  bool _loading = false;
+  late final _controllers = [for (final f in widget.fields) TextEditingController(text: f.initialValue)];
   String? _error;
 
   List<String> get _values => [for (final c in _controllers) c.text];
@@ -111,64 +93,65 @@ class _ProfileFormDialogState extends State<ProfileFormDialog> {
     super.dispose();
   }
 
-  Future<void> _submit() async {
-    if (_loading || !_formKey.currentState!.validate()) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      await widget.onSubmit(_values);
-      if (mounted) Navigator.of(context).pop(true);
-    } on AuthFailure catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _error = null);
+    context.read<ProfileBloc>().add(widget.toEvent(_values));
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 360,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < widget.fields.length; i++) ...[
-                if (i > 0) const SizedBox(height: 12),
-                AppTextField(
-                  label: widget.fields[i].label,
-                  isPassword: widget.fields[i].isPassword,
-                  controller: _controllers[i],
-                  validator: (value) => widget.fields[i].validator(value, _values),
-                  enabled: !_loading,
-                  autofocus: i == 0,
-                ),
-              ],
-              if (_error != null) ...[
-                const SizedBox(height: 12),
-                Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-              ],
-            ],
+    return BlocConsumer<ProfileBloc, ProfileState>(
+      listenWhen: (prev, curr) => curr.notice != prev.notice && curr.notice?.action == widget.action,
+      listener: (context, state) {
+        final notice = state.notice!;
+        notice.isError ? setState(() => _error = notice.message) : Navigator.of(context).pop(true);
+      },
+      buildWhen: (prev, curr) => prev.action != curr.action,
+      builder: (context, state) {
+        final loading = state.action == widget.action;
+        return AlertDialog(
+          title: Text(widget.title),
+          content: SizedBox(
+            width: 360,
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < widget.fields.length; i++) ...[
+                    if (i > 0) const SizedBox(height: 12),
+                    AppTextField(
+                      label: widget.fields[i].label,
+                      isPassword: widget.fields[i].isPassword,
+                      controller: _controllers[i],
+                      validator: (value) => widget.fields[i].validator(value, _values),
+                      enabled: !loading,
+                      autofocus: i == 0,
+                    ),
+                  ],
+                  if (_error != null) ...[
+                    const SizedBox(height: 12),
+                    Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  ],
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _loading ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Скасувати'),
-        ),
-        FilledButton(
-          onPressed: _loading ? null : _submit,
-          child: _loading
-              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-              : Text(widget.submitLabel),
-        ),
-      ],
+          actions: [
+            TextButton(
+              onPressed: loading ? null : () => Navigator.of(context).pop(false),
+              child: const Text('Скасувати'),
+            ),
+            FilledButton(
+              onPressed: loading ? null : _submit,
+              child: loading
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : Text(widget.submitLabel),
+            ),
+          ],
+        );
+      },
     );
   }
 }
